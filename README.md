@@ -2,45 +2,28 @@
 
 Event Plugins и готовые Workflow для контролируемого взаимодействия xyOps с Kubernetes REST API без обязательной установки `kubectl` на xySat.
 
-Версия: `1.0.0`.
+Версия: `1.1.0`.
 
 ## Возможности
 
-- проверка подключения и версии API Server;
-- список namespaces;
-- список Deployments и Pods с label/field selectors;
-- события namespace;
-- логи текущего или предыдущего контейнера;
-- read-only диагностика Pod: состояние, Events и логи;
-- rollout restart Deployment;
-- изменение replicas через Scale subresource;
-- подготовка данных для Storage Bucket `bkubernetescache`.
+Базовый пакет:
 
-Плагин намеренно не предоставляет произвольный `kubectl`, `exec` в Pod, чтение Kubernetes Secrets, удаление namespace или применение произвольных manifests.
+- проверка подключения к API Server;
+- namespaces, Deployments, Pods и Events;
+- текущие и previous-логи контейнеров;
+- диагностика Pod;
+- restart и scale Deployment;
+- Bucket-кэш Kubernetes.
 
-## Состав
+Пакет **Kubernetes Hygiene & Diagnostics**:
 
-| Файл | Назначение |
-|---|---|
-| `xyops.json` | Bucket и четыре Event Plugins |
-| `workflow-restart-deployment.json` | Workflow перезапуска Deployment |
-| `workflow-diagnose-pod.json` | Workflow диагностики Pod |
-| `manifests/xyops-rbac.yaml` | ServiceAccount и минимальный RBAC для первой версии |
+- общая проверка здоровья namespace;
+- автоматическая диагностика Deployment;
+- предварительный просмотр очистки;
+- контролируемая очистка старых Pods и Jobs;
+- проверка здоровья CronJobs.
 
-## Требования
-
-На xySat:
-
-- xyOps / xySat `1.0.83` или новее;
-- Node.js 18+;
-- `npm`, `npx`, `git`;
-- HTTPS-доступ до Kubernetes API Server.
-
-На Kubernetes:
-
-- ServiceAccount token;
-- CA API Server;
-- RBAC-права из `manifests/xyops-rbac.yaml` либо более узкий Role/RoleBinding.
+Плагин не предоставляет произвольный `kubectl`, `exec` в Pod, чтение Kubernetes Secrets, удаление namespace или применение произвольных manifests.
 
 ## Secret Vault
 
@@ -51,7 +34,7 @@ KUBE_API_URL=https://kube-api.example.local:6443
 KUBE_TOKEN=<ServiceAccount bearer token>
 ```
 
-CA задаётся одним из вариантов:
+CA задаётся одним способом:
 
 ```text
 KUBE_CA_CERT=-----BEGIN CERTIFICATE-----
@@ -65,44 +48,15 @@ KUBE_CA_CERT=-----BEGIN CERTIFICATE-----
 KUBE_CA_CERT_PATH=/etc/xyops/kubernetes/ca.crt
 ```
 
-Необязательно, только для временной диагностики:
+Только для временной диагностики:
 
 ```text
 KUBE_INSECURE_TLS=false
 ```
 
-URL и путь к CA можно задавать в форме Event. Значения формы имеют приоритет над Secret Vault. Токен никогда не выводится в результат Job.
+## Импорт
 
-## Создание ServiceAccount
-
-```bash
-kubectl apply -f manifests/xyops-rbac.yaml
-```
-
-Создать временный токен:
-
-```bash
-kubectl -n xyops-system create token xyops-kubernetes --duration=24h
-```
-
-Получить адрес API Server:
-
-```bash
-kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
-echo
-```
-
-Получить CA из kubeconfig в файл:
-
-```bash
-kubectl config view --raw --minify \
-  -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' \
-  | base64 -d > kubernetes-ca.crt
-```
-
-Для постоянной эксплуатации организуйте ротацию ограниченного ServiceAccount token. Не используйте `cluster-admin`.
-
-## Импорт в xyOps
+Базовые Plugins и Workflow:
 
 ```text
 1. xyops.json
@@ -110,71 +64,81 @@ kubectl config view --raw --minify \
 3. workflow-diagnose-pod.json
 ```
 
-Workflow импортируются после `xyops.json`, потому что они ссылаются на Plugin ID:
+Диагностика и очистка:
 
 ```text
-pmlc2ha8fk8s_restart
-pmlc2ha8fk8s_diag
+4. xyops-hygiene-plugin.json
+5. workflow-namespace-health.json
+6. workflow-diagnose-deployment.json
+7. workflow-cleanup-preview.json
+8. workflow-cleanup-apply.json
+9. workflow-cronjob-health.json
 ```
 
-Команда всех Event Plugins:
+Workflow импортируются после Plugin-файлов, потому что xyOps проверяет Plugin ID при импорте.
+
+## Проверка здоровья namespace
+
+`workflow-namespace-health.json` формирует read-only отчёт по Deployments, Pods, Jobs, CronJobs и Warning Events. Он обнаруживает неготовые Deployments, `ProgressDeadlineExceeded`, Failed/Pending Pods, CrashLoopBackOff, ImagePullBackOff, высокий restartCount, Failed Jobs и suspended CronJobs.
+
+Выходные данные: `kubernetes_namespace_health`.
+
+## Диагностика Deployment
+
+`workflow-diagnose-deployment.json` получает Deployment conditions, связанные ReplicaSets и Pods, Events, текущие и previous-логи. Число диагностируемых Pods и строк логов ограничивается параметрами запуска.
+
+Выходные данные: `kubernetes_deployment_diagnostics`.
+
+## Предварительный просмотр очистки
+
+`workflow-cleanup-preview.json` ничего не удаляет. Он показывает Succeeded, Failed и Evicted Pods, а также Completed/Failed Jobs старше заданного возраста. Последние N Jobs каждого CronJob защищаются, `kube-system` исключается по умолчанию.
+
+Выходные данные: `kubernetes_cleanup_preview`.
+
+## Контролируемая очистка
+
+`workflow-cleanup-apply.json` повторно вычисляет кандидатов непосредственно перед действием. По умолчанию включён `dry_run`, требуется подтверждение, действует лимит удалений, `kube-system` запрещён, Running/Pending/Unknown Pods никогда не выбираются.
+
+Рекомендуемый порядок:
 
 ```text
-npx -y github:askarahodov/xyops-kubernetes-management#main
+1. Preview.
+2. Apply с dry run.
+3. Проверка результата.
+4. Apply без dry run.
 ```
 
-## Event Plugins
+Выходные данные: `kubernetes_cleanup_result`.
 
-### Kubernetes — Управление
+## Проверка CronJobs
 
-Основная форма с операциями просмотра, логов, диагностики, restart/scale и синхронизации кэша.
+`workflow-cronjob-health.json` показывает schedule, suspend, последний Job и lastScheduleTime. Выделяются suspended, Failed, никогда не запускавшиеся и давно не запускавшиеся CronJobs.
 
-### Kubernetes — Перезапустить Deployment
+Выходные данные: `kubernetes_cronjob_health`.
 
-Изменяет только annotation Pod Template:
+## RBAC
 
-```text
-xyops.io/restartedAt=<ISO timestamp>
+Примените:
+
+```bash
+kubectl apply -f manifests/xyops-rbac.yaml
 ```
 
-Изменение Pod Template запускает новый rollout. Операция требует подтверждения.
+Read-only операциям нужны `get/list` для namespaces, Pods, logs, Events, Deployments, ReplicaSets, Jobs и CronJobs. Restart/scale требуют `patch`; реальная очистка требует `delete` для Pods и Jobs.
 
-### Kubernetes — Масштабировать Deployment
+Не назначайте `cluster-admin`.
 
-Изменяет только `spec.replicas` через `/scale`. Допустимо значение от `0` до `10000`; операция требует подтверждения.
+Создать временный token:
 
-### Kubernetes — Диагностика Pod
-
-Получает Pod, связанные Events и последние логи. Если container не указан, пытается получить логи всех обычных контейнеров Pod. Ошибка чтения логов одного контейнера не отменяет остальные результаты диагностики.
-
-## Кэш Kubernetes
-
-Операция **Синхронизировать меню** возвращает:
-
-```text
-namespaces
-deployments
-pods
-metadata
+```bash
+kubectl -n xyops-system create token xyops-kubernetes --duration=24h
 ```
 
-Чтобы сохранить результат, добавьте Action:
+## Подробная документация
 
-```text
-Condition: Success
-Action: Store Bucket
-Bucket: Кэш Kubernetes
-Sync: Data
-```
-
-## Безопасность
-
-- используйте отдельный ServiceAccount;
-- выдавайте только необходимые `get`, `list`, `patch`;
-- не отключайте TLS в production;
-- ограничьте право запуска restart/scale Events в xyOps;
-- не храните bearer token в полях Event или в Git;
-- учитывайте, что `replicas=0` остановит workload.
+- `HYGIENE_WORKFLOWS.md` — подробное описание диагностики и очистки;
+- `manifests/xyops-rbac.yaml` — ServiceAccount и RBAC;
+- descriptions, notes и captions встроены во все импортируемые Event и Workflow.
 
 ## Проверка проекта
 
@@ -183,3 +147,12 @@ npm test
 npm run check
 npm pack --dry-run
 ```
+
+## Безопасность
+
+- храните token только в Secret Vault;
+- не отключайте TLS в production;
+- сначала используйте preview и dry run;
+- не разрешайте `kube-system` без отдельной необходимости;
+- ограничьте запуск cleanup Event административной ролью xyOps;
+- учитывайте, что удаление Pods и Jobs необратимо.

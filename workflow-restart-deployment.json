@@ -1,0 +1,140 @@
+{
+  "type": "xypdf",
+  "description": "Контролируемый Workflow перезапуска одного Kubernetes Deployment. Требует ServiceAccount token в KUBE_TOKEN, явное подтверждение и Plugin pmlc2ha8fk8s_restart. Workflow изменяет только annotation Pod Template, чтобы Kubernetes выполнил новый rollout.",
+  "version": "1.0",
+  "xyops": "1.0.83",
+  "items": [
+    {
+      "type": "event",
+      "data": {
+        "id": "ek8srestartdeployment",
+        "title": "Kubernetes → перезапустить Deployment",
+        "enabled": true,
+        "targets": [],
+        "params": {},
+        "fields": [
+          {
+            "id": "api_url",
+            "title": "URL Kubernetes API",
+            "type": "text",
+            "variant": "url",
+            "value": "",
+            "required": false,
+            "caption": "Можно оставить пустым и использовать KUBE_API_URL."
+          },
+          {
+            "id": "ca_cert_path",
+            "title": "Путь к CA Kubernetes",
+            "type": "text",
+            "value": "",
+            "required": false
+          },
+          {
+            "id": "insecure_tls",
+            "title": "Отключить проверку TLS",
+            "type": "checkbox",
+            "value": false
+          },
+          {
+            "id": "namespace",
+            "title": "Namespace",
+            "type": "text",
+            "value": "default",
+            "required": true
+          },
+          {
+            "id": "deployment_name",
+            "title": "Deployment",
+            "type": "text",
+            "value": "",
+            "required": true
+          },
+          {
+            "id": "confirm_action",
+            "title": "Подтвердить перезапуск",
+            "type": "checkbox",
+            "value": false
+          }
+        ],
+        "triggers": [
+          {
+            "enabled": true,
+            "type": "manual",
+            "id": "ek8srestartdeploymenttrigger"
+          }
+        ],
+        "limits": [
+          {
+            "type": "job",
+            "enabled": true,
+            "amount": 1
+          },
+          {
+            "type": "queue",
+            "enabled": true,
+            "amount": 0
+          },
+          {
+            "type": "retry",
+            "enabled": true,
+            "amount": 0,
+            "duration": 0
+          }
+        ],
+        "actions": [],
+        "notes": "Контролируемый Workflow перезапуска одного Kubernetes Deployment. Требует ServiceAccount token в KUBE_TOKEN, явное подтверждение и Plugin pmlc2ha8fk8s_restart. Workflow изменяет только annotation Pod Template, чтобы Kubernetes выполнил новый rollout.",
+        "workflow": {
+          "nodes": [
+            {
+              "id": "ek8srestartdeploymenttrigger",
+              "type": "trigger",
+              "x": -100,
+              "y": 180
+            },
+            {
+              "id": "ek8srestartdeploymentjob",
+              "type": "job",
+              "x": 220,
+              "y": 180,
+              "data": {
+                "params": {
+                  "action": "restart_deployment",
+                  "api_url": "{{ workflow.params.api_url }}",
+                  "ca_cert_path": "{{ workflow.params.ca_cert_path }}",
+                  "timeout_seconds": "30",
+                  "insecure_tls": "{{ workflow.params.insecure_tls }}",
+                  "namespace": "{{ workflow.params.namespace }}",
+                  "deployment_name": "{{ workflow.params.deployment_name }}",
+                  "confirm_action": "{{ workflow.params.confirm_action }}"
+                },
+                "targets": [
+                  "main"
+                ],
+                "algo": "random",
+                "label": "Перезапустить Deployment",
+                "category": "general",
+                "plugin": "pmlc2ha8fk8s_restart",
+                "icon": "restart",
+                "tags": []
+              }
+            }
+          ],
+          "connections": [
+            {
+              "id": "ek8srestartdeploymentconnection",
+              "source": "ek8srestartdeploymenttrigger",
+              "dest": "ek8srestartdeploymentjob"
+            }
+          ]
+        },
+        "category": "general",
+        "type": "workflow",
+        "icon": "restart",
+        "tags": [],
+        "plugin": "_workflow",
+        "username": "admin",
+        "revision": 1
+      }
+    }
+  ]
+}

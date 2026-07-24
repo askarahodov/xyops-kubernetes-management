@@ -1,19 +1,13 @@
 # Процесс выпуска релиза
 
-1. Обновить `package.json`, README и CHANGELOG.
-2. Выполнить:
-
-```bash
-npm test
-npm run check
-npm pack --dry-run
-```
-
-3. Проверить XYPDF и порядок импорта.
+1. Убедиться, что версия в `package.json` равна `1.2.0`.
+2. Выполнить `npm test`, `npm run check` и `npm pack --dry-run`.
+3. Проверить, что production XYPDF используют `#v1.2.0` и не содержат `#main`.
 4. Провести проверки из `ACCEPTANCE_TESTS.md` на тестовом кластере.
-5. Объединить PR в `main` только после успешного CI.
-6. Создать Git tag, совпадающий с версией package, например `v1.2.0`.
-7. Production XYPDF должен использовать tag, а не `#main`.
-8. Для разработки допускается отдельный файл с командой `#main`.
+5. Перевести PR из draft и выполнить squash merge в `main` только после зелёного CI.
+6. Создать неизменяемый Git tag `v1.2.0` на squash merge commit.
+7. Проверить запуск `npx -y github:askarahodov/xyops-kubernetes-management#v1.2.0`.
+8. Импортировать production XYPDF и повторить smoke test подключения.
+9. Удалить рабочую ветку.
 
-Нельзя перемещать существующий релизный tag на другой commit. Для исправления выпускается новая patch-версия.
+Существующий release tag нельзя перемещать. Исправление выпускается новой patch-версией.

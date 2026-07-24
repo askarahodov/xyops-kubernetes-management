@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.2.0
+
+- добавлена автоматическая Kubernetes API pagination с обработкой `metadata.continue`, лимитом объектов и защитой от повторяющихся токенов;
+- restart и scale Deployment теперь по умолчанию ожидают фактическое завершение rollout;
+- добавлены проверки `observedGeneration`, количества replicas, updated, ready, available и `ProgressDeadlineExceeded`;
+- restart защищён от ложного успеха на предыдущей generation;
+- поддержано ожидание scale Deployment до 0 replicas;
+- добавлена безопасная локальная проверка срока действия ServiceAccount JWT без вывода исходного токена;
+- production XYPDF закреплены на `v1.2.0`;
+- добавлены release-процесс, приёмочный checklist и regression-тесты;
+- ServiceAccount и RBAC не изменялись.
+
 ## v1.0.0
 
 - добавлен Kubernetes REST API client без зависимости от `kubectl`;

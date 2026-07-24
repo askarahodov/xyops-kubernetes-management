@@ -4,17 +4,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
-const HYGIENE_ACTIONS = new Set([
-  'namespace_health',
-  'diagnose_deployment',
-  'cleanup_preview',
-  'cleanup_apply',
-  'cronjob_health'
-]);
-
-const TOKEN_ACTIONS = new Set([
-  'check_token_expiry'
-]);
+const TOKEN_ACTIONS = new Set(['check_token_expiry']);
 
 async function readInput() {
   const chunks = [];
@@ -25,9 +15,7 @@ async function readInput() {
 }
 
 function resolveEntrypoint(action) {
-  if (HYGIENE_ACTIONS.has(action)) return 'hygiene.js';
-  if (TOKEN_ACTIONS.has(action)) return 'token-runner.js';
-  return 'index.js';
+  return TOKEN_ACTIONS.has(action) ? 'token-runner.js' : 'hardening.js';
 }
 
 async function main() {
@@ -46,7 +34,11 @@ async function main() {
   child.on('close', (code) => { process.exitCode = code ?? 1; });
 }
 
-main().catch((error) => {
-  process.stdout.write(`${JSON.stringify({ xy: 1, code: 1, description: error.message || String(error) })}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stdout.write(`${JSON.stringify({ xy: 1, code: 1, description: error.message || String(error) })}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { TOKEN_ACTIONS, resolveEntrypoint };

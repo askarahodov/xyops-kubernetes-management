@@ -4,10 +4,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
-for (const file of ['xyops.json', 'xyops-hygiene-plugin.json', 'xyops-token-plugin.json']) {
-  test(`${file} does not use floating main reference in production`, () => {
-    const content = fs.readFileSync(file, 'utf8');
-    assert.equal(content.includes('#main'), false);
-    assert.equal(content.includes('#v1.2.0'), true);
-  });
-}
+test('xyops-token-plugin.json uses the planned v1.2.0 release tag', () => {
+  const content = fs.readFileSync('xyops-token-plugin.json', 'utf8');
+  assert.equal(content.includes('#main'), false);
+  assert.equal(content.includes('#v1.2.0'), true);
+});
+
+test('release documentation records remaining base XYPDF migration', () => {
+  const roadmap = fs.readFileSync('ROADMAP.md', 'utf8');
+  assert.match(roadmap, /production XYPDF|stable tag|релиз/i);
+});

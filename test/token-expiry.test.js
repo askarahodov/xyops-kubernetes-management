@@ -15,9 +15,9 @@ test('decodeJwtPayload decodes JWT payload without exposing token', () => {
   });
 });
 
-test('tokenExpiryInfo reports remaining time', () => {
+test('tokenExpiryInfo reports remaining time without early rotation', () => {
   const now = 1_700_000_000;
-  const info = tokenExpiryInfo(token({ iat: now - 60, exp: now + 7200 }), now);
+  const info = tokenExpiryInfo(token({ iat: now - 60, exp: now + 7200 }), now, 3600);
   assert.equal(info.expires_at, new Date((now + 7200) * 1000).toISOString());
   assert.equal(info.remaining_seconds, 7200);
   assert.equal(info.rotation_required, false);

@@ -1,4 +1,3 @@
-\
 'use strict';
 
 function addQuery(path, values = {}) {

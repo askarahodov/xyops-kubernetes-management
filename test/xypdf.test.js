@@ -7,6 +7,11 @@ const assert = require('node:assert/strict');
 
 const root = path.join(__dirname, '..');
 const readJson = (name) => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8'));
+const RELEASE_COMMAND = 'npx -y github:askarahodov/xyops-kubernetes-management#v1.2.0';
+
+function fieldIds(fields) {
+  return new Set((fields || []).map((field) => field.id));
+}
 
 test('main XYPDF contains bucket and four documented Event Plugins', () => {
   const config = readJson('xyops.json');
@@ -21,8 +26,31 @@ test('main XYPDF contains bucket and four documented Event Plugins', () => {
   );
 
   for (const plugin of plugins) {
-    assert.equal(plugin.data.command, 'npx -y github:askarahodov/xyops-kubernetes-management#main');
+    assert.equal(plugin.data.command, RELEASE_COMMAND);
     assert.ok(String(plugin.data.notes).length >= 120);
+  }
+});
+
+test('restart and scale plugins expose rollout wait controls', () => {
+  const config = readJson('xyops.json');
+  for (const id of ['pmlc2ha8fk8s_restart', 'pmlc2ha8fk8s_scale']) {
+    const plugin = config.items.find((item) => item.data?.id === id);
+    const ids = fieldIds(plugin.data.params);
+    assert.equal(ids.has('wait_for_rollout'), true);
+    assert.equal(ids.has('rollout_timeout_seconds'), true);
+    assert.equal(ids.has('rollout_poll_seconds'), true);
+  }
+
+  const management = config.items.find((item) => item.data?.id === 'pmlc2ha8fk8s1');
+  const toolset = management.data.params.find((param) => param.id === 'kubernetes_tool');
+  for (const action of ['restart_deployment', 'scale_deployment']) {
+    const tool = toolset.data.tools.find((item) =>
+      item.fields.find((field) => field.id === 'action')?.value === action
+    );
+    const ids = fieldIds(tool.fields);
+    assert.equal(ids.has('wait_for_rollout'), true);
+    assert.equal(ids.has('rollout_timeout_seconds'), true);
+    assert.equal(ids.has('rollout_poll_seconds'), true);
   }
 });
 

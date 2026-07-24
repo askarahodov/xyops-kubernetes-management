@@ -24,7 +24,8 @@ Event Plugins и готовые Workflow для контролируемого �
 - проверка здоровья CronJobs;
 - Kubernetes API pagination по `metadata.continue`;
 - ожидание завершения rollout после restart и scale;
-- безопасная проверка срока действия `KUBE_TOKEN`.
+- безопасная проверка срока действия `KUBE_TOKEN`;
+- автоматизированная smoke-приёмка на тестовом Kubernetes.
 
 Плагин не предоставляет произвольный `kubectl`, `exec` в Pod, чтение Kubernetes Secrets, удаление namespace или применение произвольных manifests.
 
@@ -135,6 +136,33 @@ rollout_poll_seconds=5
 
 ServiceAccount `xyops-kubernetes` и существующий RBAC в релизе 1.2.0 не изменялись.
 
+## Автоматизированная приёмка
+
+Команда `npm run acceptance:smoke` запускает безопасную часть `ACCEPTANCE_TESTS.md` против реального тестового Kubernetes. По умолчанию выполняются read-only операции, cleanup preview/dry-run и проверки обязательного подтверждения. Содержимое Pod logs захватывается, но не печатается, а `KUBE_TOKEN` и CA редактируются из сообщений об ошибках.
+
+```bash
+export KUBE_API_URL='https://kube-api.example.local:6443'
+export KUBE_TOKEN='<ServiceAccount bearer token>'
+export KUBE_CA_CERT_PATH='/etc/xyops/kubernetes/ca.crt'
+export ACCEPTANCE_NAMESPACE='xyops-test'
+export ACCEPTANCE_DEPLOYMENT='test-api'
+
+npm run acceptance:smoke
+```
+
+Restart и scale включаются только явно. Для scale скрипт запоминает исходное количество replicas и восстанавливает его после проверки:
+
+```bash
+export ACCEPTANCE_MUTATING='true'
+export ACCEPTANCE_SCALE_REPLICAS='0'
+export ACCEPTANCE_TIMEOUT_SECONDS='600'
+export ACCEPTANCE_POLL_SECONDS='5'
+
+npm run acceptance:smoke
+```
+
+Реальное удаление подготовленных объектов, previous logs и принудительные rollout failure-сценарии остаются ручными release-gates.
+
 ## RBAC
 
 Примените:
@@ -159,9 +187,6 @@ kubectl -n xyops-system create token xyops-kubernetes --duration=24h
 - `PRODUCTION_HARDENING.md` — pagination, rollout wait и ограничения;
 - `ACCEPTANCE_TESTS.md` — обязательная приёмка на тестовом Kubernetes;
 - `RELEASE_PROCESS.md` — выпуск неизменяемого Git tag;
-- `PRODUCTION_HARDENING.md` — pagination, rollout wait и ограничения;
-- `ACCEPTANCE_TESTS.md` — обязательная приёмка на тестовом Kubernetes;
-- `RELEASE_PROCESS.md` — выпуск неизменяемого Git tag;
 - `manifests/xyops-rbac.yaml` — ServiceAccount и RBAC;
 - descriptions, notes и captions встроены во все импортируемые Event и Workflow.
 
@@ -170,6 +195,7 @@ kubectl -n xyops-system create token xyops-kubernetes --duration=24h
 ```bash
 npm test
 npm run check
+npm run release:check
 npm pack --dry-run
 ```
 

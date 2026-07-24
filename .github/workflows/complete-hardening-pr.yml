@@ -23,15 +23,15 @@ jobs:
           node-version: 22
 
       - name: Execute embedded hardening builder
+        shell: bash
         run: |
-          python3 <<'PY'
-          from pathlib import Path
-          import textwrap
-          workflow = Path('.github/workflows/complete-hardening.yml').read_text(encoding='utf-8')
-          marker = "python3 <<'PY'\n"
-          embedded = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
-          exec(compile(textwrap.dedent(embedded), 'complete-hardening.py', 'exec'))
-          PY
+          awk '
+            /python3 <<'"'"'PY'"'"'/ { capture=1; next }
+            capture && /^          PY$/ { exit }
+            capture { sub(/^          /, ""); print }
+          ' .github/workflows/complete-hardening.yml > /tmp/complete-hardening.py
+          test -s /tmp/complete-hardening.py
+          python3 /tmp/complete-hardening.py
 
       - name: Validate
         run: |

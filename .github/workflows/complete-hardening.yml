@@ -1,0 +1,265 @@
+name: Complete production hardening
+
+on:
+  push:
+    branches:
+      - agent/production-hardening-1.2
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/production-hardening-1.2
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Complete runtime and release files
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('.')
+
+          (root / 'pagination.js').write_text(r'''\
+'use strict';
+
+function addQuery(path, values = {}) {
+  const url = new URL(path, 'https://kubernetes.invalid');
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+async function listAllPages(client, path, { pageSize = 500, maxItems = 10000, maxPages = 1000 } = {}) {
+  const items = [];
+  let continueToken = '';
+  const seen = new Set();
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const payload = await client.request(addQuery(path, {
+      limit: Math.min(pageSize, Math.max(1, maxItems - items.length)),
+      continue: continueToken || undefined
+    }));
+    const pageItems = Array.isArray(payload?.items) ? payload.items : [];
+    items.push(...pageItems.slice(0, Math.max(0, maxItems - items.length)));
+    if (items.length >= maxItems) return items;
+
+    const next = String(payload?.metadata?.continue || '');
+    if (!next) return items;
+    if (seen.has(next)) throw new Error('Kubernetes pagination returned a repeated continue token');
+    seen.add(next);
+    continueToken = next;
+  }
+
+  throw new Error(`Kubernetes pagination exceeded ${maxPages} pages`);
+}
+
+module.exports = { addQuery, listAllPages };
+''', encoding='utf-8')
+
+          (root / 'rollout.js').write_text(r'''\
+'use strict';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function deploymentRolloutState(deployment) {
+  const desired = Number(deployment?.spec?.replicas || 0);
+  const generation = Number(deployment?.metadata?.generation || 0);
+  const observed = Number(deployment?.status?.observedGeneration || 0);
+  const updated = Number(deployment?.status?.updatedReplicas || 0);
+  const ready = Number(deployment?.status?.readyReplicas || 0);
+  const available = Number(deployment?.status?.availableReplicas || 0);
+  const unavailable = Number(deployment?.status?.unavailableReplicas || 0);
+  const deadline = (deployment?.status?.conditions || []).find(
+    (condition) => condition?.type === 'Progressing' && condition?.reason === 'ProgressDeadlineExceeded'
+  );
+  return {
+    desired, generation, observed, updated, ready, available, unavailable,
+    complete: observed >= generation && updated === desired && ready === desired && available === desired && unavailable === 0,
+    failed: Boolean(deadline),
+    failure_reason: deadline?.message || deadline?.reason || ''
+  };
+}
+
+async function waitForDeploymentRollout(client, path, {
+  timeoutSeconds = 300,
+  pollSeconds = 5,
+  onPoll
+} = {}) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastDeployment;
+  while (Date.now() <= deadline) {
+    lastDeployment = await client.request(path);
+    const state = deploymentRolloutState(lastDeployment);
+    if (onPoll) onPoll(state);
+    if (state.failed) throw new Error(`Deployment rollout failed: ${state.failure_reason || 'ProgressDeadlineExceeded'}`);
+    if (state.complete) return { deployment: lastDeployment, state };
+    await sleep(pollSeconds * 1000);
+  }
+  const state = deploymentRolloutState(lastDeployment || {});
+  throw new Error(`Deployment rollout timed out after ${timeoutSeconds}s: ready ${state.ready}/${state.desired}, updated ${state.updated}, available ${state.available}`);
+}
+
+module.exports = { deploymentRolloutState, waitForDeploymentRollout };
+''', encoding='utf-8')
+
+          index_path = root / 'index.js'
+          index = index_path.read_text(encoding='utf-8')
+          index = index.replace("const https = require('node:https');", "const https = require('node:https');\nconst { listAllPages } = require('./pagination');\nconst { waitForDeploymentRollout } = require('./rollout');")
+          index = index.replace("const payload = await client.request(`/api/v1/namespaces${buildQuery({ limit })}`);\n  const namespaces = (payload.items || []).map(normalizeNamespace)", "const items = await listAllPages(client, '/api/v1/namespaces', { pageSize: Math.min(limit, 500), maxItems: limit });\n  const namespaces = items.map(normalizeNamespace)")
+          index = index.replace("const payload = await client.request(\n    `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments${buildQuery({ limit, labelSelector })}`\n  );\n  const deployments = (payload.items || []).map(normalizeDeployment)", "const items = await listAllPages(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments${buildQuery({ labelSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });\n  const deployments = items.map(normalizeDeployment)")
+          index = index.replace("const payload = await client.request(\n    `/api/v1/namespaces/${encodePath(namespace)}/pods${buildQuery({ limit, labelSelector, fieldSelector })}`\n  );\n  const pods = (payload.items || []).map(normalizePod)", "const items = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/pods${buildQuery({ labelSelector, fieldSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });\n  const pods = items.map(normalizePod)")
+          index = index.replace("const payload = await client.request(\n    `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ limit, fieldSelector })}`\n  );\n  const events = (payload.items || []).map(normalizeEvent)", "const items = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ fieldSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });\n  const events = items.map(normalizeEvent)")
+          index = index.replace("const eventsPayload = await client.request(\n    `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({\n      fieldSelector: `involvedObject.name=${pod}`,\n      limit: 200\n    })}`\n  );\n  const events = (eventsPayload.items || []).map(normalizeEvent)", "const eventItems = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ fieldSelector: `involvedObject.name=${pod}` })}`, { pageSize: 200, maxItems: 200 });\n  const events = eventItems.map(normalizeEvent)")
+          index = index.replace("const [namespacePayload, deploymentPayload, podPayload] = await Promise.all([\n    client.request(`/api/v1/namespaces${buildQuery({ limit })}`),\n    client.request(`/apis/apps/v1/deployments${buildQuery({ limit })}`),\n    client.request(`/api/v1/pods${buildQuery({ limit })}`)\n  ]);\n\n  const namespaces = (namespacePayload.items || []).map(normalizeNamespace)", "const [namespaceItems, deploymentItems, podItems] = await Promise.all([\n    listAllPages(client, '/api/v1/namespaces', { pageSize: 500, maxItems: limit }),\n    listAllPages(client, '/apis/apps/v1/deployments', { pageSize: 500, maxItems: limit }),\n    listAllPages(client, '/api/v1/pods', { pageSize: 500, maxItems: limit })\n  ]);\n\n  const namespaces = namespaceItems.map(normalizeNamespace)")
+          index = index.replace("const deployments = (deploymentPayload.items || []).map(normalizeDeployment)", "const deployments = deploymentItems.map(normalizeDeployment)")
+          index = index.replace("const pods = (podPayload.items || []).map(normalizePod)", "const pods = podItems.map(normalizePod)")
+
+          restart_marker = "  const normalized = normalizeDeployment(deployment);\n  send({ table: deploymentTable([normalized]) });"
+          restart_replacement = "  let finalDeployment = deployment;\n  let rollout;\n  if (asBoolean(params.wait_for_rollout, true)) {\n    const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {\n      timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),\n      pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),\n      onPoll: (state) => send({ status: `Rollout ${state.ready}/${state.desired} ready`, progress: 0.2 + Math.min(0.7, state.desired ? (state.ready / state.desired) * 0.7 : 0.7) })\n    });\n    finalDeployment = result.deployment;\n    rollout = result.state;\n  }\n  const normalized = normalizeDeployment(finalDeployment);\n  send({ table: deploymentTable([normalized]) });"
+          index = index.replace(restart_marker, restart_replacement, 1)
+          index = index.replace("generation: normalized.generation\n      }", "generation: normalized.generation,\n        rollout: rollout || null\n      }", 1)
+          index = index.replace("return { description: `Restart requested for Deployment ${namespace}/${name}` };", "return { description: `Deployment ${namespace}/${name} restart ${rollout ? 'completed' : 'requested'}` };")
+
+          scale_marker = "  send({\n    table: {\n      title: 'Deployment scale',"
+          scale_prefix = "  let rollout;\n  if (asBoolean(params.wait_for_rollout, true)) {\n    const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {\n      timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),\n      pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),\n      onPoll: (state) => send({ status: `Scale rollout ${state.ready}/${state.desired} ready`, progress: 0.2 + Math.min(0.7, state.desired ? (state.ready / state.desired) * 0.7 : 0.7) })\n    });\n    rollout = result.state;\n  }\n\n  send({\n    table: {\n      title: 'Deployment scale',"
+          index = index.replace(scale_marker, scale_prefix, 1)
+          index = index.replace("replicas: Number(scale?.spec?.replicas ?? replicas)\n      }", "replicas: Number(scale?.spec?.replicas ?? replicas),\n        rollout: rollout || null\n      }", 1)
+          index = index.replace("return { description: `Scaled Deployment ${namespace}/${name} to ${replicas} replica(s)` };", "return { description: `Scaled Deployment ${namespace}/${name} to ${replicas} replica(s)${rollout ? ' and rollout completed' : ''}` };")
+          index_path.write_text(index, encoding='utf-8')
+
+          hygiene_path = root / 'hygiene.js'
+          hygiene = hygiene_path.read_text(encoding='utf-8')
+          hygiene = hygiene.replace("const https = require('node:https');", "const https = require('node:https');\nconst { listAllPages } = require('./pagination');")
+          hygiene = hygiene.replace("async function list(client,path){const payload=await client.request(path);return payload.items||[];}", "async function list(client,path){return listAllPages(client,path,{pageSize:500,maxItems:10000});}")
+          hygiene_path.write_text(hygiene, encoding='utf-8')
+
+          for name in ['xyops.json', 'xyops-hygiene-plugin.json', 'xyops-token-plugin.json']:
+            path = root / name
+            text = path.read_text(encoding='utf-8').replace('#main', '#v1.2.0')
+            path.write_text(text, encoding='utf-8')
+
+          package_path = root / 'package.json'
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          package['version'] = '1.2.0'
+          package['scripts']['check'] = 'node --check index.js && node --check hygiene.js && node --check pagination.js && node --check rollout.js && node --check token.js && node --check token-runner.js && node --check runner.js'
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          (root / 'test' / 'pagination.test.js').write_text(r'''\
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { listAllPages } = require('../pagination');
+
+test('listAllPages follows continue tokens', async () => {
+  const calls = [];
+  const client = { request: async (path) => {
+    calls.push(path);
+    if (calls.length === 1) return { items: [1, 2], metadata: { continue: 'next' } };
+    return { items: [3], metadata: { continue: '' } };
+  }};
+  assert.deepEqual(await listAllPages(client, '/api/v1/pods', { pageSize: 2, maxItems: 10 }), [1, 2, 3]);
+  assert.match(calls[1], /continue=next/);
+});
+
+test('listAllPages rejects repeated continue token', async () => {
+  const client = { request: async () => ({ items: [], metadata: { continue: 'same' } }) };
+  await assert.rejects(() => listAllPages(client, '/api/v1/pods'), /repeated continue token/);
+});
+''', encoding='utf-8')
+
+          (root / 'test' / 'rollout.test.js').write_text(r'''\
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { deploymentRolloutState, waitForDeploymentRollout } = require('../rollout');
+
+test('deploymentRolloutState detects completion including scale to zero', () => {
+  assert.equal(deploymentRolloutState({ metadata: { generation: 2 }, spec: { replicas: 0 }, status: { observedGeneration: 2 } }).complete, true);
+});
+
+test('waitForDeploymentRollout completes after readiness', async () => {
+  let calls = 0;
+  const client = { request: async () => {
+    calls += 1;
+    return calls === 1
+      ? { metadata: { generation: 2 }, spec: { replicas: 1 }, status: { observedGeneration: 2, updatedReplicas: 1 } }
+      : { metadata: { generation: 2 }, spec: { replicas: 1 }, status: { observedGeneration: 2, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+  }};
+  const result = await waitForDeploymentRollout(client, '/deployment', { timeoutSeconds: 1, pollSeconds: 0 });
+  assert.equal(result.state.complete, true);
+});
+
+test('deploymentRolloutState detects ProgressDeadlineExceeded', () => {
+  const state = deploymentRolloutState({ status: { conditions: [{ type: 'Progressing', reason: 'ProgressDeadlineExceeded', message: 'deadline' }] } });
+  assert.equal(state.failed, true);
+});
+''', encoding='utf-8')
+
+          release_test = root / 'test' / 'release-files.test.js'
+          release_test.write_text(r'''\
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+
+for (const file of ['xyops.json', 'xyops-hygiene-plugin.json', 'xyops-token-plugin.json']) {
+  test(`${file} uses immutable v1.2.0 reference`, () => {
+    const content = fs.readFileSync(file, 'utf8');
+    assert.equal(content.includes('#main'), false);
+    assert.equal(content.includes('#v1.2.0'), true);
+    JSON.parse(content);
+  });
+}
+''', encoding='utf-8')
+
+          (root / 'PRODUCTION_HARDENING.md').write_text('''# Production Hardening 1.2.0\n\nРелиз добавляет pagination Kubernetes List API, ожидание готовности Deployment после restart/scale и безопасную проверку срока JWT. Production XYPDF используют неизменяемый tag `v1.2.0`. ServiceAccount и RBAC не изменены.\n\n## Pagination\n\nВсе базовые списки и операции Hygiene автоматически следуют `metadata.continue`, ограничивают число страниц и защищены от повторяющегося continue token.\n\n## Rollout wait\n\nRestart и scale по умолчанию ожидают `observedGeneration`, updated, ready и available replicas. Поддерживается scale до 0. Ошибки `ProgressDeadlineExceeded` и тайм-аут завершают Job ошибкой.\n\n## Token expiry\n\nОперация читает только claims `sub`, `iat` и `exp`; исходный token не выводится.\n''', encoding='utf-8')
+
+          (root / 'ROADMAP.md').write_text('''# Roadmap\n\n## 1.2.0 Production Hardening\n\n- [x] pagination Kubernetes list API;\n- [x] ожидание rollout после restart/scale;\n- [x] проверка срока ServiceAccount JWT;\n- [x] production XYPDF на стабильном tag;\n- [x] приёмочный checklist;\n- [x] release process.\n\nServiceAccount и текущий RBAC не изменены. Реальная приёмка выполняется по `ACCEPTANCE_TESTS.md` в целевом тестовом кластере.\n\n## Позже\n\n- динамические Bucket Menu;\n- multi-cluster profiles;\n- расписания и уведомления;\n- унифицированный аудит изменяющих операций.\n''', encoding='utf-8')
+
+          readme = root / 'README.md'
+          text = readme.read_text(encoding='utf-8').replace('Версия: `1.1.0`.', 'Версия: `1.2.0`.')
+          if '## Production Hardening 1.2.0' not in text:
+            text += '\n\n## Production Hardening 1.2.0\n\n- Kubernetes List API pagination;\n- ожидание rollout после restart и scale;\n- проверка срока JWT без вывода token;\n- production Plugins закреплены на `#v1.2.0`.\n'
+          readme.write_text(text, encoding='utf-8')
+
+          changelog = root / 'CHANGELOG.md'
+          old = changelog.read_text(encoding='utf-8') if changelog.exists() else '# Changelog\n'
+          if '## 1.2.0' not in old:
+            old = old.rstrip() + '\n\n## 1.2.0\n\n- Pagination Kubernetes List API.\n- Ожидание rollout после restart/scale.\n- Проверка срока ServiceAccount JWT.\n- Production XYPDF закреплены на tag v1.2.0.\n'
+          changelog.write_text(old, encoding='utf-8')
+
+          for name in ['TODO.production-hardening.txt', 'docs/.keep', 'docs/status.md', 'docs/scope.md', 'docs/no-rbac-change.md', 'docs/implementation-notes.md']:
+            path = root / name
+            if path.exists(): path.unlink()
+
+          Path('.github/workflows/complete-hardening.yml').unlink()
+          PY
+
+      - name: Validate
+        run: |
+          npm test
+          npm run check
+          npm pack --dry-run
+
+      - name: Commit completed hardening
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Завершить Production Hardening 1.2.0"
+          git push origin HEAD:agent/production-hardening-1.2

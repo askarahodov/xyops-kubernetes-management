@@ -159,6 +159,9 @@ kubectl -n xyops-system create token xyops-kubernetes --duration=24h
 - `PRODUCTION_HARDENING.md` — pagination, rollout wait и ограничения;
 - `ACCEPTANCE_TESTS.md` — обязательная приёмка на тестовом Kubernetes;
 - `RELEASE_PROCESS.md` — выпуск неизменяемого Git tag;
+- `PRODUCTION_HARDENING.md` — pagination, rollout wait и ограничения;
+- `ACCEPTANCE_TESTS.md` — обязательная приёмка на тестовом Kubernetes;
+- `RELEASE_PROCESS.md` — выпуск неизменяемого Git tag;
 - `manifests/xyops-rbac.yaml` — ServiceAccount и RBAC;
 - descriptions, notes и captions встроены во все импортируемые Event и Workflow.
 

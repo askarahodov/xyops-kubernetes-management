@@ -1,0 +1,42 @@
+name: Finalize release branch
+
+on:
+  push:
+    branches:
+      - agent/production-hardening-1.2
+    paths:
+      - scripts/finalize-release.js
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/production-hardening-1.2
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Finalize XYPDF and documentation
+        run: node scripts/finalize-release.js
+      - name: Validate release candidate
+        run: |
+          npm test
+          npm run check
+          npm pack --dry-run
+          git diff --check
+      - name: Commit generated release files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+          else
+            git commit -m "Финализировать Production Hardening 1.2.0"
+            git push origin HEAD:agent/production-hardening-1.2
+          fi

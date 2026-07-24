@@ -7,7 +7,6 @@ const {
   asInteger,
   emit,
   executeOperation,
-  required,
   resolveConfig
 } = require('./index');
 const { OPS: HYGIENE_OPERATIONS } = require('./hygiene');
@@ -16,6 +15,12 @@ const { waitForDeploymentRollout } = require('./rollout');
 
 const HYGIENE_ACTIONS = new Set(Object.keys(HYGIENE_OPERATIONS));
 const ROLLOUT_ACTIONS = new Set(['restart_deployment', 'scale_deployment']);
+
+function required(value, name) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) throw new Error(`Required value is missing: ${name}`);
+  return normalized;
+}
 
 class PaginatedKubernetesClient extends KubernetesClient {
   async request(path, options = {}) {

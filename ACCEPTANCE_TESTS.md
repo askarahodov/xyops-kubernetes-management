@@ -16,6 +16,41 @@
 - выбрать тестовый namespace с Deployment и CronJob;
 - подготовить Completed Job и Failed Job, которые разрешено удалить во время проверки cleanup.
 
+## Автоматизированный smoke-runner
+
+Команда `npm run acceptance:smoke` запускает безопасную часть приёмки непосредственно против тестового Kubernetes API. По умолчанию она выполняет только read-only операции, cleanup preview/dry-run и проверяет, что restart, scale и cleanup отклоняются без явного подтверждения.
+
+Минимальная конфигурация:
+
+```bash
+export KUBE_API_URL='https://kubernetes.example.test:6443'
+export KUBE_TOKEN='<service-account-token>'
+export KUBE_CA_CERT_PATH='/path/to/ca.crt'
+export ACCEPTANCE_NAMESPACE='xyops-test'
+export ACCEPTANCE_DEPLOYMENT='test-api'
+
+npm run acceptance:smoke
+```
+
+Для реального restart и scale требуется отдельное явное включение. Скрипт запоминает исходное количество replicas и после проверки scale возвращает его обратно:
+
+```bash
+export ACCEPTANCE_MUTATING='true'
+export ACCEPTANCE_SCALE_REPLICAS='0'
+export ACCEPTANCE_TIMEOUT_SECONDS='600'
+export ACCEPTANCE_POLL_SECONDS='5'
+
+npm run acceptance:smoke
+```
+
+Особенности безопасности:
+
+- `KUBE_TOKEN` и содержимое CA не выводятся;
+- stdout/stderr дочерних операций захватываются, а содержимое Pod logs не печатается;
+- cleanup выполняется только как preview или `dry_run=true`;
+- изменяющие проверки требуют одновременно `ACCEPTANCE_MUTATING=true`, имени Deployment и целевого количества replicas;
+- script не заменяет ручную проверку реального удаления подготовленных объектов, previous logs и принудительных rollout failure-сценариев.
+
 ## Read-only проверки
 
 - [ ] подключение к Kubernetes API;

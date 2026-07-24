@@ -458,7 +458,7 @@ async function restartDeployment(params, client, send) {
 
   let finalDeployment = deployment;
   let rollout;
-  if (asBoolean(params.wait_for_rollout, true)) {
+  if (asBoolean(params.wait_for_rollout, false)) {
     const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {
       timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),
       pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),
@@ -502,7 +502,7 @@ async function scaleDeployment(params, client, send) {
   );
 
   let rollout;
-  if (asBoolean(params.wait_for_rollout, true)) {
+  if (asBoolean(params.wait_for_rollout, false)) {
     const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {
       timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),
       pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),

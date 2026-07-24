@@ -10,7 +10,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check hygiene.js && node --check pagination.js && node --check rollout.js && node --check hardening.js && node --check token.js && node --check token-runner.js && node --check runner.js"
+    "check": "node --check index.js && node --check hygiene.js && node --check pagination.js && node --check rollout.js && node --check hardening.js && node --check token.js && node --check token-runner.js && node --check runner.js && node --check scripts/normalize-release.js",
+    "release:check": "node scripts/normalize-release.js",
+    "release:normalize": "node scripts/normalize-release.js --write"
   },
   "engines": {
     "node": ">=18"

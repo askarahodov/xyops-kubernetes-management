@@ -124,9 +124,13 @@ async function executeHardeningAction(params, client, send = emit) {
     );
     minimumGeneration = Number(before?.metadata?.generation || 0) + 1;
   }
+
+  const operationParams = ROLLOUT_ACTIONS.has(action)
+    ? { ...params, wait_for_rollout: false }
+    : params;
   const result = HYGIENE_ACTIONS.has(action)
-    ? await HYGIENE_OPERATIONS[action](params, client, send)
-    : await executeOperation(params, client, send);
+    ? await HYGIENE_OPERATIONS[action](operationParams, client, send)
+    : await executeOperation(operationParams, client, send);
   const rollout = await runRolloutWait(params, client, send, { minimumGeneration });
   if (!rollout) return result;
   return {

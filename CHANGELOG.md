@@ -8,6 +8,7 @@
 - restart защищён от ложного успеха на предыдущей generation;
 - поддержано ожидание scale Deployment до 0 replicas;
 - добавлена безопасная локальная проверка срока действия ServiceAccount JWT без вывода исходного токена;
+- добавлена команда `npm run acceptance:smoke` для безопасной автоматизации read-only, dry-run, confirmation и опциональных restart/scale проверок на тестовом Kubernetes;
 - production XYPDF закреплены на `v1.2.0`;
 - добавлены release-процесс, приёмочный checklist и regression-тесты;
 - ServiceAccount и RBAC не изменялись.

@@ -480,7 +480,7 @@ async function restartDeployment(params, client, send) {
       }
     }
   });
-  return { description: `Deployment ${namespace}/${name} restart ${rollout ? 'completed' : 'requested'}` };
+  return { description: rollout ? `Restart completed for Deployment ${namespace}/${name}` : `Restart requested for Deployment ${namespace}/${name}` };
 }
 
 async function scaleDeployment(params, client, send) {

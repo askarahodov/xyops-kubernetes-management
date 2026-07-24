@@ -10,7 +10,7 @@ function deploymentRolloutState(deployment, expectedReplicas, minimumGeneration 
     : Number(expectedReplicas);
   const generation = Number(deployment?.metadata?.generation || 0);
   const observed = Number(deployment?.status?.observedGeneration || 0);
-  const replicas = Number(deployment?.status?.replicas || 0);
+  const replicas = Number(deployment?.status?.replicas ?? desired);
   const updated = Number(deployment?.status?.updatedReplicas || 0);
   const ready = Number(deployment?.status?.readyReplicas || 0);
   const available = Number(deployment?.status?.availableReplicas || 0);
@@ -36,25 +36,23 @@ function deploymentRolloutState(deployment, expectedReplicas, minimumGeneration 
   };
 }
 
-async function waitWithOptions(client, {
-  namespace,
-  name,
+async function waitOnPath(client, path, {
   expectedReplicas,
   timeoutMs = 300000,
   pollIntervalMs = 5000,
   minimumGeneration = 0,
   onPoll
-}) {
-  const path = `/apis/apps/v1/namespaces/${encodeURIComponent(namespace)}/deployments/${encodeURIComponent(name)}`;
+} = {}) {
   const started = Date.now();
   const deadline = started + timeoutMs;
   let attempts = 0;
   let lastState;
+  let lastDeployment;
 
   while (Date.now() <= deadline) {
     attempts += 1;
-    const deployment = await client.request(path);
-    lastState = deploymentRolloutState(deployment, expectedReplicas, minimumGeneration);
+    lastDeployment = await client.request(path);
+    lastState = deploymentRolloutState(lastDeployment, expectedReplicas, minimumGeneration);
     if (onPoll) onPoll(lastState, attempts);
     if (lastState.failed) {
       const error = new Error(`Deployment rollout failed: ${lastState.failure_reason || 'ProgressDeadlineExceeded'}`);
@@ -62,7 +60,10 @@ async function waitWithOptions(client, {
       throw error;
     }
     if (lastState.complete) {
-      return { ...lastState, attempts, elapsed_ms: Date.now() - started };
+      return {
+        deployment: lastDeployment,
+        state: { ...lastState, attempts, elapsed_ms: Date.now() - started }
+      };
     }
     await sleep(pollIntervalMs);
   }
@@ -74,21 +75,17 @@ async function waitWithOptions(client, {
 
 async function waitForDeploymentRollout(client, pathOrOptions, legacyOptions = {}) {
   if (typeof pathOrOptions === 'object' && pathOrOptions !== null) {
-    return waitWithOptions(client, pathOrOptions);
+    const options = pathOrOptions;
+    const path = `/apis/apps/v1/namespaces/${encodeURIComponent(options.namespace)}/deployments/${encodeURIComponent(options.name)}`;
+    const result = await waitOnPath(client, path, options);
+    return result.state;
   }
 
-  const path = String(pathOrOptions || '');
-  const match = path.match(/\/namespaces\/([^/]+)\/deployments\/([^/?]+)/);
-  if (!match) throw new Error(`Cannot parse Deployment path: ${path}`);
-  const result = await waitWithOptions(client, {
-    namespace: decodeURIComponent(match[1]),
-    name: decodeURIComponent(match[2]),
+  return waitOnPath(client, String(pathOrOptions || ''), {
     timeoutMs: Number(legacyOptions.timeoutSeconds || 300) * 1000,
     pollIntervalMs: Number(legacyOptions.pollSeconds ?? 5) * 1000,
     onPoll: legacyOptions.onPoll
   });
-  const deployment = await client.request(path);
-  return { deployment, state: result };
 }
 
 module.exports = { deploymentRolloutState, waitForDeploymentRollout };

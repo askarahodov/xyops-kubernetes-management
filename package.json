@@ -1,6 +1,6 @@
 {
   "name": "xyops-kubernetes-management",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "xyOps Kubernetes API management, diagnostics and controlled cleanup workflows",
   "license": "MIT",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check hygiene.js && node --check runner.js"
+    "check": "node --check index.js && node --check hygiene.js && node --check token.js && node --check token-runner.js && node --check runner.js"
   },
   "engines": {
     "node": ">=18"

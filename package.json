@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check hygiene.js && node --check token.js && node --check token-runner.js && node --check runner.js"
+    "check": "node --check index.js && node --check hygiene.js && node --check pagination.js && node --check rollout.js && node --check hardening.js && node --check token.js && node --check token-runner.js && node --check runner.js"
   },
   "engines": {
     "node": ">=18"

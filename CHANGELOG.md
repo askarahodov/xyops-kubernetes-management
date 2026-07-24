@@ -23,3 +23,10 @@
 - добавлены четыре Event Plugins и два Workflow;
 - добавлен ServiceAccount/RBAC manifest;
 - добавлены unit и XYPDF regression tests.
+
+## 1.2.0
+
+- Pagination Kubernetes List API.
+- Ожидание rollout после restart/scale.
+- Проверка срока ServiceAccount JWT.
+- Production XYPDF закреплены на tag v1.2.0.

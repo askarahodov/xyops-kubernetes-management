@@ -1,19 +1,15 @@
 # Roadmap
 
-## 1.2.0 Production Hardening — реализовано
+## 1.2.0 Production Hardening
 
-- Kubernetes API pagination;
-- ожидание rollout после restart и scale;
-- проверка срока ServiceAccount JWT;
-- production XYPDF на стабильном tag;
-- release process и приёмочный checklist;
-- unit, syntax и package regression checks.
+- [x] pagination Kubernetes list API;
+- [x] ожидание rollout после restart/scale;
+- [x] проверка срока ServiceAccount JWT;
+- [x] production XYPDF на стабильном tag;
+- [x] приёмочный checklist;
+- [x] release process.
 
-ServiceAccount и текущий RBAC не изменялись по принятому решению проекта.
-
-## Release gates
-
-Перед созданием tag `v1.2.0` необходимо пройти `ACCEPTANCE_TESTS.md` на реальном тестовом Kubernetes. Это внешний этап приёмки, а не незавершённая реализация кода.
+ServiceAccount и текущий RBAC не изменены. Реальная приёмка выполняется по `ACCEPTANCE_TESTS.md` в целевом тестовом кластере.
 
 ## Позже
 

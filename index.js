@@ -2,6 +2,8 @@
 
 const fs = require('node:fs');
 const https = require('node:https');
+const { listAllPages } = require('./pagination');
+const { waitForDeploymentRollout } = require('./rollout');
 
 const MAX_ERROR_BODY = 2000;
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
@@ -343,8 +345,8 @@ async function testConnection(params, client, send) {
 
 async function listNamespaces(params, client, send) {
   const limit = asInteger(params.list_limit, 500, 1, 5000);
-  const payload = await client.request(`/api/v1/namespaces${buildQuery({ limit })}`);
-  const namespaces = (payload.items || []).map(normalizeNamespace)
+  const items = await listAllPages(client, '/api/v1/namespaces', { pageSize: Math.min(limit, 500), maxItems: limit });
+  const namespaces = items.map(normalizeNamespace)
     .sort((a, b) => a.name.localeCompare(b.name));
   send({ table: namespaceTable(namespaces) });
   send({ data: { kubernetes_namespaces: namespaces } });
@@ -355,10 +357,8 @@ async function listDeployments(params, client, send) {
   const namespace = required(params.namespace, 'namespace');
   const limit = asInteger(params.list_limit, 500, 1, 5000);
   const labelSelector = optional(params.label_selector);
-  const payload = await client.request(
-    `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments${buildQuery({ limit, labelSelector })}`
-  );
-  const deployments = (payload.items || []).map(normalizeDeployment)
+  const items = await listAllPages(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments${buildQuery({ labelSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });
+  const deployments = items.map(normalizeDeployment)
     .sort((a, b) => a.name.localeCompare(b.name));
   send({ table: deploymentTable(deployments) });
   send({ data: { kubernetes_deployments: deployments } });
@@ -370,10 +370,8 @@ async function listPods(params, client, send) {
   const limit = asInteger(params.list_limit, 500, 1, 5000);
   const labelSelector = optional(params.label_selector);
   const fieldSelector = optional(params.field_selector);
-  const payload = await client.request(
-    `/api/v1/namespaces/${encodePath(namespace)}/pods${buildQuery({ limit, labelSelector, fieldSelector })}`
-  );
-  const pods = (payload.items || []).map(normalizePod)
+  const items = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/pods${buildQuery({ labelSelector, fieldSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });
+  const pods = items.map(normalizePod)
     .sort((a, b) => a.name.localeCompare(b.name));
   send({ table: podTable(pods) });
   send({ data: { kubernetes_pods: pods } });
@@ -384,10 +382,8 @@ async function listEvents(params, client, send) {
   const namespace = required(params.namespace, 'namespace');
   const limit = asInteger(params.list_limit, 200, 1, 1000);
   const fieldSelector = optional(params.field_selector);
-  const payload = await client.request(
-    `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ limit, fieldSelector })}`
-  );
-  const events = (payload.items || []).map(normalizeEvent)
+  const items = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ fieldSelector })}`, { pageSize: Math.min(limit, 500), maxItems: limit });
+  const events = items.map(normalizeEvent)
     .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
   send({ table: eventTable(events) });
   send({ data: { kubernetes_events: events } });
@@ -460,7 +456,18 @@ async function restartDeployment(params, client, send) {
     }
   );
 
-  const normalized = normalizeDeployment(deployment);
+  let finalDeployment = deployment;
+  let rollout;
+  if (asBoolean(params.wait_for_rollout, true)) {
+    const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {
+      timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),
+      pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),
+      onPoll: (state) => send({ status: `Rollout ${state.ready}/${state.desired} ready`, progress: 0.2 + Math.min(0.7, state.desired ? (state.ready / state.desired) * 0.7 : 0.7) })
+    });
+    finalDeployment = result.deployment;
+    rollout = result.state;
+  }
+  const normalized = normalizeDeployment(finalDeployment);
   send({ table: deploymentTable([normalized]) });
   send({
     data: {
@@ -468,11 +475,12 @@ async function restartDeployment(params, client, send) {
         namespace,
         name,
         restarted_at: restartedAt,
-        generation: normalized.generation
+        generation: normalized.generation,
+        rollout: rollout || null
       }
     }
   });
-  return { description: `Restart requested for Deployment ${namespace}/${name}` };
+  return { description: `Deployment ${namespace}/${name} restart ${rollout ? 'completed' : 'requested'}` };
 }
 
 async function scaleDeployment(params, client, send) {
@@ -493,6 +501,16 @@ async function scaleDeployment(params, client, send) {
     }
   );
 
+  let rollout;
+  if (asBoolean(params.wait_for_rollout, true)) {
+    const result = await waitForDeploymentRollout(client, `/apis/apps/v1/namespaces/${encodePath(namespace)}/deployments/${encodePath(name)}`, {
+      timeoutSeconds: asInteger(params.rollout_timeout_seconds, 300, 10, 3600),
+      pollSeconds: asInteger(params.rollout_poll_seconds, 5, 1, 60),
+      onPoll: (state) => send({ status: `Scale rollout ${state.ready}/${state.desired} ready`, progress: 0.2 + Math.min(0.7, state.desired ? (state.ready / state.desired) * 0.7 : 0.7) })
+    });
+    rollout = result.state;
+  }
+
   send({
     table: {
       title: 'Deployment scale',
@@ -506,11 +524,12 @@ async function scaleDeployment(params, client, send) {
       kubernetes_scaled_deployment: {
         namespace,
         name,
-        replicas: Number(scale?.spec?.replicas ?? replicas)
+        replicas: Number(scale?.spec?.replicas ?? replicas),
+        rollout: rollout || null
       }
     }
   });
-  return { description: `Scaled Deployment ${namespace}/${name} to ${replicas} replica(s)` };
+  return { description: `Scaled Deployment ${namespace}/${name} to ${replicas} replica(s)${rollout ? ' and rollout completed' : ''}` };
 }
 
 async function diagnosePod(params, client, send) {
@@ -523,13 +542,8 @@ async function diagnosePod(params, client, send) {
     `/api/v1/namespaces/${encodePath(namespace)}/pods/${encodePath(pod)}`
   );
   const normalizedPod = normalizePod(podObject);
-  const eventsPayload = await client.request(
-    `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({
-      fieldSelector: `involvedObject.name=${pod}`,
-      limit: 200
-    })}`
-  );
-  const events = (eventsPayload.items || []).map(normalizeEvent)
+  const eventItems = await listAllPages(client, `/api/v1/namespaces/${encodePath(namespace)}/events${buildQuery({ fieldSelector: `involvedObject.name=${pod}` })}`, { pageSize: 200, maxItems: 200 });
+  const events = eventItems.map(normalizeEvent)
     .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
 
   const containers = container
@@ -583,17 +597,17 @@ function cacheMenuItem(id, title) {
 
 async function syncCache(params, client, send) {
   const limit = asInteger(params.list_limit, 5000, 1, 10000);
-  const [namespacePayload, deploymentPayload, podPayload] = await Promise.all([
-    client.request(`/api/v1/namespaces${buildQuery({ limit })}`),
-    client.request(`/apis/apps/v1/deployments${buildQuery({ limit })}`),
-    client.request(`/api/v1/pods${buildQuery({ limit })}`)
+  const [namespaceItems, deploymentItems, podItems] = await Promise.all([
+    listAllPages(client, '/api/v1/namespaces', { pageSize: 500, maxItems: limit }),
+    listAllPages(client, '/apis/apps/v1/deployments', { pageSize: 500, maxItems: limit }),
+    listAllPages(client, '/api/v1/pods', { pageSize: 500, maxItems: limit })
   ]);
 
-  const namespaces = (namespacePayload.items || []).map(normalizeNamespace)
+  const namespaces = namespaceItems.map(normalizeNamespace)
     .sort((a, b) => a.name.localeCompare(b.name));
-  const deployments = (deploymentPayload.items || []).map(normalizeDeployment)
+  const deployments = deploymentItems.map(normalizeDeployment)
     .sort((a, b) => `${a.namespace}/${a.name}`.localeCompare(`${b.namespace}/${b.name}`));
-  const pods = (podPayload.items || []).map(normalizePod)
+  const pods = podItems.map(normalizePod)
     .sort((a, b) => `${a.namespace}/${a.name}`.localeCompare(`${b.namespace}/${b.name}`));
   const updatedAt = new Date().toISOString();
 

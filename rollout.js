@@ -1,114 +1,46 @@
+\
 'use strict';
 
-function number(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function deploymentRolloutState(deployment, expectedReplicas) {
-  const desired = expectedReplicas === undefined
-    ? number(deployment?.spec?.replicas)
-    : number(expectedReplicas);
-  const generation = number(deployment?.metadata?.generation);
-  const observedGeneration = number(deployment?.status?.observedGeneration);
-  const replicas = number(deployment?.status?.replicas);
-  const updated = number(deployment?.status?.updatedReplicas);
-  const ready = number(deployment?.status?.readyReplicas);
-  const available = number(deployment?.status?.availableReplicas);
-  const unavailable = number(deployment?.status?.unavailableReplicas);
-  const conditions = Array.isArray(deployment?.status?.conditions)
-    ? deployment.status.conditions
-    : [];
-  const progressDeadline = conditions.find((condition) => (
-    condition?.type === 'Progressing'
-    && condition?.status === 'False'
-    && condition?.reason === 'ProgressDeadlineExceeded'
-  ));
-
-  const observed = observedGeneration >= generation;
-  const complete = !progressDeadline
-    && observed
-    && replicas === desired
-    && updated === desired
-    && ready === desired
-    && available === desired
-    && unavailable === 0;
-
+function deploymentRolloutState(deployment) {
+  const desired = Number(deployment?.spec?.replicas || 0);
+  const generation = Number(deployment?.metadata?.generation || 0);
+  const observed = Number(deployment?.status?.observedGeneration || 0);
+  const updated = Number(deployment?.status?.updatedReplicas || 0);
+  const ready = Number(deployment?.status?.readyReplicas || 0);
+  const available = Number(deployment?.status?.availableReplicas || 0);
+  const unavailable = Number(deployment?.status?.unavailableReplicas || 0);
+  const deadline = (deployment?.status?.conditions || []).find(
+    (condition) => condition?.type === 'Progressing' && condition?.reason === 'ProgressDeadlineExceeded'
+  );
   return {
-    namespace: String(deployment?.metadata?.namespace || ''),
-    name: String(deployment?.metadata?.name || ''),
-    desired,
-    generation,
-    observed_generation: observedGeneration,
-    replicas,
-    updated,
-    ready,
-    available,
-    unavailable,
-    observed,
-    complete,
-    progress_deadline_exceeded: Boolean(progressDeadline),
-    progress_deadline_message: String(progressDeadline?.message || '')
+    desired, generation, observed, updated, ready, available, unavailable,
+    complete: observed >= generation && updated === desired && ready === desired && available === desired && unavailable === 0,
+    failed: Boolean(deadline),
+    failure_reason: deadline?.message || deadline?.reason || ''
   };
 }
 
-function sleep(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function waitForDeploymentRollout(client, options = {}) {
-  const namespace = String(options.namespace || '').trim();
-  const name = String(options.name || '').trim();
-  if (!namespace) throw new Error('namespace is required for rollout wait');
-  if (!name) throw new Error('deployment name is required for rollout wait');
-
-  const timeoutMs = Number(options.timeoutMs ?? 300000);
-  const pollIntervalMs = Number(options.pollIntervalMs ?? 5000);
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('rollout timeout must be positive');
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 1) throw new Error('rollout poll interval must be positive');
-
-  const minimumGeneration = Number(options.minimumGeneration || 0);
-  const now = options.now || Date.now;
-  const pause = options.sleep || sleep;
-  const startedAt = now();
-  let attempts = 0;
-  let lastState;
-
-  while (true) {
-    const deployment = await client.request(
-      `/apis/apps/v1/namespaces/${encodeURIComponent(namespace)}/deployments/${encodeURIComponent(name)}`
-    );
-    attempts += 1;
-    lastState = deploymentRolloutState(deployment, options.expectedReplicas);
-
-    if (typeof options.onPoll === 'function') {
-      await options.onPoll(lastState, attempts);
-    }
-
-    if (lastState.progress_deadline_exceeded) {
-      const error = new Error(
-        `Deployment ${namespace}/${name} exceeded its progress deadline${lastState.progress_deadline_message ? `: ${lastState.progress_deadline_message}` : ''}`
-      );
-      error.rolloutState = lastState;
-      throw error;
-    }
-
-    const generationReached = lastState.generation >= minimumGeneration;
-    if (lastState.complete && generationReached) {
-      return { ...lastState, attempts, elapsed_ms: Math.max(0, now() - startedAt) };
-    }
-
-    if (now() - startedAt >= timeoutMs) {
-      const error = new Error(`Deployment ${namespace}/${name} rollout timed out after ${timeoutMs} ms`);
-      error.rolloutState = lastState;
-      throw error;
-    }
-
-    await pause(pollIntervalMs);
+async function waitForDeploymentRollout(client, path, {
+  timeoutSeconds = 300,
+  pollSeconds = 5,
+  onPoll
+} = {}) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastDeployment;
+  while (Date.now() <= deadline) {
+    lastDeployment = await client.request(path);
+    const state = deploymentRolloutState(lastDeployment);
+    if (onPoll) onPoll(state);
+    if (state.failed) throw new Error(`Deployment rollout failed: ${state.failure_reason || 'ProgressDeadlineExceeded'}`);
+    if (state.complete) return { deployment: lastDeployment, state };
+    await sleep(pollSeconds * 1000);
   }
+  const state = deploymentRolloutState(lastDeployment || {});
+  throw new Error(`Deployment rollout timed out after ${timeoutSeconds}s: ready ${state.ready}/${state.desired}, updated ${state.updated}, available ${state.available}`);
 }
 
-module.exports = {
-  deploymentRolloutState,
-  waitForDeploymentRollout
-};
+module.exports = { deploymentRolloutState, waitForDeploymentRollout };

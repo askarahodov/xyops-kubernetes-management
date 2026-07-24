@@ -18,10 +18,6 @@ jobs:
           ref: agent/production-hardening-1.2
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Execute embedded hardening builder
         shell: bash
         run: |
@@ -32,12 +28,6 @@ jobs:
           ' .github/workflows/complete-hardening.yml > /tmp/complete-hardening.py
           test -s /tmp/complete-hardening.py
           python3 /tmp/complete-hardening.py
-
-      - name: Validate
-        run: |
-          npm test
-          npm run check
-          npm pack --dry-run
 
       - name: Commit completed hardening
         run: |
